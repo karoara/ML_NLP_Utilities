@@ -94,13 +94,13 @@ class SPEC_NET(torch.nn.Module):
 # - Allows specifying layers, whether uni/bi-directional, dropout
 # - Initial hidden/cell state values set up as parameters
 
-class MY_LSTM(torch.nn.Module):
+class LSTM(torch.nn.Module):
   
   # initialization method
   def __init__(self, in_d, h_d, layers=1, dropout=0.0, bi=False, all_states=False):
-    super(MY_LSTM, self).__init__()
+    super(LSTM, self).__init__()
     
-    # # of states returned, bidirectionality, hidden/cell states, inner LSTM
+    # of states returned, bidirectionality, hidden/cell states, inner LSTM
     self.all_states = all_states
     self.out_vects = 2 if bi else 1
     self.h_init = torch.nn.Parameter(torch.Tensor(layers*self.out_vects, 1, h_d).float())
@@ -122,10 +122,10 @@ class MY_LSTM(torch.nn.Module):
     
     # compute output
     h_all, (h_final, _) = self.lstm.forward(inputs, (h_0, c_0))
-    if not self.lang: 
+    if self.lang: final_output = h_all
+    else: # if binary classifier
       if self.out_vects == 2: final_output = torch.cat((h_final[-2], h_final[-1]), 1) 
       else: final_output = h_final[-1]
-    else: final_output = h_all
     
     return final_output
 
@@ -148,7 +148,7 @@ class BINARY_CLASSIFIER(torch.nn.Module):
     
     # modules
     out_vects = 2 if bi else 1
-    self.lstm = MY_LSTM(in_d, h_d, layers, dropout, bi)
+    self.lstm = LSTM(in_d, h_d, layers, dropout, bi)
     self.classifier = TRANS(in_d=h_d*out_vects, out_d=1, non_l=True)
   
   # forward propagation
@@ -173,23 +173,33 @@ class BINARY_CLASSIFIER(torch.nn.Module):
 
 # LANGUAGE MODEL --------------------------------------------------------------
 # 
+# Neural model that performs language modeling (predicts the next word, given
+# previous words, for every word in a sequence). Expects a series of indices
+# (into corresponding word vectors) as input, and returns a set of scores
+# (over subsequent words) for words/indices at every timestep as output. 
+# 
+# - allows specifying number of layers, dropout
+# - applies Xavier initialization to weights
+# - allows specifying pretrained vectors for linear layer that produces word scores
 
 class LANGUAGE_MODEL(torch.nn.Module):
   
   # initialization method
-  def __init__(self, in_d, h_d, layers, dropout, bi,
-               vocab_size, vectors, output_vectors):
+  def __init__(self, in_d, h_d, layers, dropout,
+               vocab_size, vectors, output_layer=None, output_learning=True):
     super(LANGUAGE_MODEL, self).__init__()
     
-    # modules
-    out_vects = 2 if bi else 1
-    self.vectors = vectors
-    self.lstm = MY_LSTM(in_d, h_d, layers, dropout, bi, all_states=True)
-    self.map_output = MY_L(h_d, 100)
-    self.output = torch.from_numpy(output_vectors).float()
-    self.output.requires_grad = False
-    self.output = torch.t(self.output)
-    self.output = self.output.to(device)
+    # standard modules
+    self.embeddings = vectors
+    self.lstm = LSTM(in_d, h_d, layers, dropout, bi=False, all_states=True)
+    self.output_l = TRANS(h_d, vocab_size)
+
+    # is provided, initialize output layer to given values, set learning
+    if output_layer != None:
+      weights, bias = list(self.output_l.parameters())
+      weights.data = torch.from_numpy(output_vectors).float()
+      bias.data = torch.zeros(bias.size()).float()
+      for param in output_l.parameters: param.requires_grad = output_learning
   
   # forward propagation
   def forward(self, input_inds, targets, lengths):
@@ -206,18 +216,13 @@ class LANGUAGE_MODEL(torch.nn.Module):
     
     # forward computation (LSTM output)
     inputs_proc = self.lstm.forward(inputs, b_size)
-
-    # get processed inputs in correct form for output layer - (B x S) x 200
     inputs_proc, _ = torch.nn.utils.rnn.pad_packed_sequence(inputs_proc, batch_first=True)
+
+    # get processed inputs, targets in correct form for output layer - (B x S)
     inputs_proc = inputs_proc.contiguous()
     inputs_proc = inputs_proc.view(-1, inputs_proc.shape[2])
-
-    # get targets in correct form for output layer - (B x S)
     targets = targets.contiguous()
     targets = targets.view(-1)
 
-    # get final outputs and return
-    # return self.output.forward(inputs_proc), targets
-    to_outputs = self.map_output.forward(inputs_proc)
-    return torch.matmul(to_outputs, self.output), targets
+    return self.output_l.forward(inputs_proc), targets
 

@@ -51,3 +51,4 @@ def acc_helper(model, inputs, targets, lengths, batch_size, type):
     model.train()
     if type == "bin_classfn": return classfn_acc/len(inputs)
     else: return crossent_loss/tot_words, np.exp(crossent_loss)
+
