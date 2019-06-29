@@ -1,6 +1,6 @@
 # MODELS ----------------------------------------------------------------------
 # 
-# Useful model abstractions in Pytorch. 
+# Useful model abstractions (Pytorch).
 
 
 import torch
@@ -130,11 +130,11 @@ class MY_LSTM(torch.nn.Module):
     return final_output
 
 
-# BINARY CLASSIFIER (LANGUAGE) ------------------------------------------------
+# BINARY CLASSIFIER -----------------------------------------------------------
 # 
-# Neural model that performs binary classification for language data. Expects
-# a set of vectors (words in a sentence) as input, returns a label (0/1) as output.
-# Consists of an LSTM and a classification layer. 
+# Neural model that performs binary classification for language data (for stuff
+# like sentiment analysis, etc). Expects a set of vectors (words in a sentence) 
+# as input, returns a label (0/1) as output. Consists of an LSTM & classfn layer. 
 # 
 # - allows specifying # of layers, uni/bi-directionality, dropout for the LSTM
 # - allows specifying dimensionality of input vectors
@@ -146,10 +146,10 @@ class BINARY_CLASSIFIER(torch.nn.Module):
   def __init__(self, in_d, h_d, layers, dropout, bi):
     super(BINARY_CLASSIFIER, self).__init__()
     
-    # Baseline modules
+    # modules
     out_vects = 2 if bi else 1
     self.lstm = MY_LSTM(in_d, h_d, layers, dropout, bi)
-    self.classifier = MY_NL(h_d*out_vects, 1)
+    self.classifier = TRANS(in_d=h_d*out_vects, out_d=1, non_l=True)
   
   # forward propagation
   def forward(self, inputs, targets, lengths):
@@ -169,49 +169,22 @@ class BINARY_CLASSIFIER(torch.nn.Module):
     outputs = self.classifier.forward(inputs_proc)
     
     return outputs, targets
-  
-  # accuracy computation
-  def accuracy(self, inputs, targets, lengths, batch_size):
-    
-    self.eval()
-    classfn_acc = 0
-    
-    # switch off gradients, get accuracy, data if on
-    with torch.no_grad():
-
-      if len(inputs) % batch_size == 0: iterations = len(inputs)//batch_size
-      else: iterations = len(inputs)//batch_size + 1
-      for batch in range(iterations):
-        
-        # get batch, forward, backward, update
-        batch_inputs = inputs[batch*batch_size : (batch+1)*batch_size]
-        batch_targets = targets[batch*batch_size : (batch+1)*batch_size]
-        batch_lengths = lengths[batch*batch_size : (batch+1)*batch_size]
-        
-        # forward pass, accuracy for batch
-        batch_outputs, batch_targets = self.forward(batch_inputs, batch_targets, batch_lengths)
-        classfn_acc += acc_helper(batch_outputs, batch_targets)
-
-    classfn_acc = classfn_acc/len(inputs)
-    self.train()
-    
-    return classfn_acc
 
 
 # LANGUAGE MODEL --------------------------------------------------------------
 # 
 
-class DA_B_lang(torch.nn.Module):
+class LANGUAGE_MODEL(torch.nn.Module):
   
   # initialization method
   def __init__(self, in_d, h_d, layers, dropout, bi,
                vocab_size, vectors, output_vectors):
-    super(DA_B_lang, self).__init__()
+    super(LANGUAGE_MODEL, self).__init__()
     
-    # Baseline modules
+    # modules
     out_vects = 2 if bi else 1
     self.vectors = vectors
-    self.lstm = MY_LSTM(in_d, h_d, layers, dropout, bi, lang=True)
+    self.lstm = MY_LSTM(in_d, h_d, layers, dropout, bi, all_states=True)
     self.map_output = MY_L(h_d, 100)
     self.output = torch.from_numpy(output_vectors).float()
     self.output.requires_grad = False
@@ -247,35 +220,4 @@ class DA_B_lang(torch.nn.Module):
     # return self.output.forward(inputs_proc), targets
     to_outputs = self.map_output.forward(inputs_proc)
     return torch.matmul(to_outputs, self.output), targets
-  
-  # cross-entropy/perplexity computation
-  def accuracy(self, inputs, targets, lengths, batch_size, loss):
-    
-    self.eval()
-    crossent_loss = 0
-    perplexity = 0
 
-    # total number of words in data (for avg loss/perplexity)
-    tot_words = np.sum(lengths)
-    
-    # switch off gradients, get accuracy, data if on
-    with torch.no_grad():
-
-      if len(inputs) % batch_size == 0: iterations = len(inputs)//batch_size
-      else: iterations = len(inputs)//batch_size + 1
-      for batch in range(iterations):
-        
-        # get batch
-        b_inputs = inputs[batch*batch_size : (batch+1)*batch_size]
-        b_targets = targets[batch*batch_size : (batch+1)*batch_size]
-        b_lengths = lengths[batch*batch_size : (batch+1)*batch_size]
-        
-        # forward pass, compute loss
-        b_outputs, b_targets = self.forward(b_inputs, b_targets, b_lengths)
-        crossent_loss += loss(b_outputs, b_targets).item()
-      
-    crossent_loss = crossent_loss/tot_words
-    perplexity = np.exp(crossent_loss)
-    self.train()
-    
-    return crossent_loss, perplexity
